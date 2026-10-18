@@ -10,16 +10,24 @@ pipeline {
     stages {
         stage('Build') {
             steps {
-                echo 'Locating application and installing dependencies...'
+                echo 'Finding application files and installing dependencies...'
                 sh '''
-                    if [ -f "$WORKSPACE/requirements.txt" ]; then
-                        APP_PATH="$WORKSPACE"
-                    elif [ -f "$WORKSPACE/python-flask-app/requirements.txt" ]; then
-                        APP_PATH="$WORKSPACE/python-flask-app"
-                    else
-                        echo "ERROR: requirements.txt not found."
-                        echo "Workspace contents:"
-                        find "$WORKSPACE" -maxdepth 4 -type f
+                    echo "=== Repository files ==="
+                    find "$WORKSPACE" -maxdepth 5 -type f
+
+                    REQ_FILE=$(find "$WORKSPACE" -maxdepth 5 \
+                        -type f -name requirements.txt \
+                        ! -path '*/.git/*' | head -n 1)
+
+                    if [ -z "$REQ_FILE" ]; then
+                        echo "ERROR: requirements.txt is missing from the Git checkout."
+                        exit 1
+                    fi
+
+                    APP_PATH=$(dirname "$REQ_FILE")
+
+                    if [ ! -f "$APP_PATH/app.py" ] || [ ! -f "$APP_PATH/test_app.py" ]; then
+                        echo "ERROR: app.py or test_app.py is missing from $APP_PATH"
                         exit 1
                     fi
 
