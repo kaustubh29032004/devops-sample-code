@@ -4,37 +4,21 @@ pipeline {
 
     environment {
         DOCKER_HOST = 'tcp://jenkins-dind:2375'
-        DOCKER_CLI = '/var/jenkins_home/docker'
+        DOCKER = '/var/jenkins_home/docker'
+        APP_DIR = 'python-flask-app'
     }
 
     stages {
         stage('Build') {
             steps {
-                echo 'Finding application files and installing dependencies...'
+                echo 'Installing Python dependencies...'
                 sh '''
-                    echo "=== Repository files ==="
-                    find "$WORKSPACE" -maxdepth 5 -type f
+                    test -f "$APP_DIR/requirements.txt"
+                    test -f "$APP_DIR/app.py"
+                    test -f "$APP_DIR/test_app.py"
 
-                    REQ_FILE=$(find "$WORKSPACE" -maxdepth 5 \
-                        -type f -name requirements.txt \
-                        ! -path '*/.git/*' | head -n 1)
-
-                    if [ -z "$REQ_FILE" ]; then
-                        echo "ERROR: requirements.txt is missing from the Git checkout."
-                        exit 1
-                    fi
-
-                    APP_PATH=$(dirname "$REQ_FILE")
-
-                    if [ ! -f "$APP_PATH/app.py" ] || [ ! -f "$APP_PATH/test_app.py" ]; then
-                        echo "ERROR: app.py or test_app.py is missing from $APP_PATH"
-                        exit 1
-                    fi
-
-                    echo "$APP_PATH" > "$WORKSPACE/.app_path"
-
-                    $DOCKER_CLI run --rm \
-                        -v "$APP_PATH:/app" \
+                    "$DOCKER" run --rm \
+                        -v "$WORKSPACE/$APP_DIR:/app" \
                         -w /app \
                         python:3.9-slim \
                         pip install -r requirements.txt
@@ -46,10 +30,8 @@ pipeline {
             steps {
                 echo 'Running unit tests...'
                 sh '''
-                    APP_PATH=$(cat "$WORKSPACE/.app_path")
-
-                    $DOCKER_CLI run --rm \
-                        -v "$APP_PATH:/app" \
+                    "$DOCKER" run --rm \
+                        -v "$WORKSPACE/$APP_DIR:/app" \
                         -w /app \
                         python:3.9-slim \
                         sh -c "pip install -r requirements.txt && python -m unittest discover -s ."
@@ -59,42 +41,42 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                echo 'Deploying application...'
+                echo 'Copying application to deployment directory...'
                 sh '''
-                    APP_PATH=$(cat "$WORKSPACE/.app_path")
                     mkdir -p "$WORKSPACE/python-app-deploy"
-                    cp "$APP_PATH/app.py" "$WORKSPACE/python-app-deploy/"
+                    cp "$APP_DIR/app.py" "$WORKSPACE/python-app-deploy/"
+                    cp "$APP_DIR/requirements.txt" "$WORKSPACE/python-app-deploy/"
                 '''
             }
         }
 
         stage('Run Application') {
             steps {
-                echo 'Starting Flask application...'
+                echo 'Starting Flask application in Docker...'
                 sh '''
-                    $DOCKER_CLI run -d --rm \
+                    "$DOCKER" rm -f python-flask-app || true
+
+                    "$DOCKER" run -d \
                         --name python-flask-app \
                         -p 5001:5000 \
                         -v "$WORKSPACE/python-app-deploy:/app" \
                         -w /app \
                         python:3.9-slim \
-                        sh -c "pip install flask==2.1.2 && python app.py"
+                        sh -c "pip install -r requirements.txt && python app.py"
                 '''
             }
         }
 
         stage('Test Application') {
             steps {
-                echo 'Testing Flask application...'
+                echo 'Checking the running Flask application...'
                 sh '''
-                    APP_PATH=$(cat "$WORKSPACE/.app_path")
-
-                    $DOCKER_CLI run --rm \
+                    "$DOCKER" run --rm \
                         --network host \
-                        -v "$APP_PATH:/app" \
+                        -v "$WORKSPACE/$APP_DIR:/app" \
                         -w /app \
                         python:3.9-slim \
-                        sh -c "pip install -r requirements.txt && python test_app.py"
+                        sh -c "pip install -r requirements.txt && python -m unittest discover -s ."
                 '''
             }
         }
@@ -106,11 +88,6 @@ pipeline {
         }
         failure {
             echo 'Pipeline failed. Check the logs for more details.'
-        }
-        always {
-            sh '''
-                $DOCKER_CLI rm -f python-flask-app 2>/dev/null || true
-            '''
         }
     }
 }
