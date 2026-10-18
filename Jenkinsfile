@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -13,11 +14,6 @@ pipeline {
                 sh '''
                     set -eu
 
-                    echo "Workspace: $WORKSPACE"
-                    echo "Repository files:"
-                    find "$WORKSPACE" -maxdepth 4 -type f \
-                        ! -path '*/.git/*' -print
-
                     if [ -f "$WORKSPACE/app.py" ] &&
                        [ -f "$WORKSPACE/requirements.txt" ] &&
                        [ -f "$WORKSPACE/test_app.py" ]; then
@@ -27,17 +23,20 @@ pipeline {
                          [ -f "$WORKSPACE/python-flask-app/test_app.py" ]; then
                         APP_PATH="$WORKSPACE/python-flask-app"
                     else
-                        echo "ERROR: Flask files were not found."
+                        echo "ERROR: Required Flask files not found."
+                        find "$WORKSPACE" -maxdepth 4 -type f \
+                            ! -path '*/.git/*' -print
                         exit 1
                     fi
 
+                    echo "Application directory: $APP_PATH"
                     echo "$APP_PATH" > "$WORKSPACE/.flask_app_path"
 
                     "$DOCKER" run --rm \
                         -v "$APP_PATH:/app" \
                         -w /app \
                         python:3.9-slim \
-                        sh -c "python -m pip install -r requirements.txt"
+                        sh -c "pwd && ls -la && python -m pip install -r requirements.txt"
                 '''
             }
         }
@@ -81,7 +80,6 @@ pipeline {
                 echo 'Starting Flask application...'
                 sh '''
                     set -eu
-
                     "$DOCKER" rm -f python-flask-app || true
 
                     "$DOCKER" run -d \
@@ -97,7 +95,7 @@ pipeline {
 
         stage('Test Application') {
             steps {
-                echo 'Testing the deployed Flask application...'
+                echo 'Testing the deployed application...'
                 sh '''
                     set -eu
 
