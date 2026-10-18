@@ -10,27 +10,24 @@ pipeline {
     stages {
         stage('Build') {
             steps {
-                echo 'Locating Flask application and installing dependencies...'
+                echo 'Installing Python dependencies...'
                 sh '''
                     set -eu
 
-                    if [ -f "$WORKSPACE/app.py" ] &&
-                       [ -f "$WORKSPACE/requirements.txt" ] &&
-                       [ -f "$WORKSPACE/test_app.py" ]; then
-                        APP_PATH="$WORKSPACE"
-                    elif [ -f "$WORKSPACE/python-flask-app/app.py" ] &&
-                         [ -f "$WORKSPACE/python-flask-app/requirements.txt" ] &&
-                         [ -f "$WORKSPACE/python-flask-app/test_app.py" ]; then
-                        APP_PATH="$WORKSPACE/python-flask-app"
-                    else
-                        echo "ERROR: Required Flask files not found."
+                    APP_PATH="$WORKSPACE/python-flask-app"
+
+                    if [ ! -f "$APP_PATH/app.py" ] ||
+                       [ ! -f "$APP_PATH/requirements.txt" ] ||
+                       [ ! -f "$APP_PATH/test_app.py" ]; then
+                        echo "ERROR: Required Flask files not found in $APP_PATH"
+                        echo "Workspace contents:"
                         find "$WORKSPACE" -maxdepth 4 -type f \
                             ! -path '*/.git/*' -print
                         exit 1
                     fi
 
-                    echo "Application directory: $APP_PATH"
                     echo "$APP_PATH" > "$WORKSPACE/.flask_app_path"
+                    echo "Application directory: $APP_PATH"
 
                     "$DOCKER" run --rm \
                         -v "$APP_PATH:/app" \
@@ -80,6 +77,7 @@ pipeline {
                 echo 'Starting Flask application...'
                 sh '''
                     set -eu
+
                     "$DOCKER" rm -f python-flask-app || true
 
                     "$DOCKER" run -d \
