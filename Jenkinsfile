@@ -5,7 +5,7 @@ pipeline {
     environment {
         DOCKER_HOST = 'tcp://jenkins-dind:2375'
         DOCKER = '/var/jenkins_home/docker'
-        APP_DIR = 'python-flask-app'
+        APP_DIR = '.'
     }
 
     stages {
@@ -13,12 +13,12 @@ pipeline {
             steps {
                 echo 'Installing Python dependencies...'
                 sh '''
-                    test -f "$APP_DIR/requirements.txt"
-                    test -f "$APP_DIR/app.py"
-                    test -f "$APP_DIR/test_app.py"
+                    test -f app.py
+                    test -f requirements.txt
+                    test -f test_app.py
 
                     "$DOCKER" run --rm \
-                        -v "$WORKSPACE/$APP_DIR:/app" \
+                        -v "$WORKSPACE:/app" \
                         -w /app \
                         python:3.9-slim \
                         pip install -r requirements.txt
@@ -31,7 +31,7 @@ pipeline {
                 echo 'Running unit tests...'
                 sh '''
                     "$DOCKER" run --rm \
-                        -v "$WORKSPACE/$APP_DIR:/app" \
+                        -v "$WORKSPACE:/app" \
                         -w /app \
                         python:3.9-slim \
                         sh -c "pip install -r requirements.txt && python -m unittest discover -s ."
@@ -41,18 +41,17 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                echo 'Copying application to deployment directory...'
+                echo 'Deploying application...'
                 sh '''
                     mkdir -p "$WORKSPACE/python-app-deploy"
-                    cp "$APP_DIR/app.py" "$WORKSPACE/python-app-deploy/"
-                    cp "$APP_DIR/requirements.txt" "$WORKSPACE/python-app-deploy/"
+                    cp app.py requirements.txt "$WORKSPACE/python-app-deploy/"
                 '''
             }
         }
 
         stage('Run Application') {
             steps {
-                echo 'Starting Flask application in Docker...'
+                echo 'Starting Flask application...'
                 sh '''
                     "$DOCKER" rm -f python-flask-app || true
 
@@ -69,11 +68,10 @@ pipeline {
 
         stage('Test Application') {
             steps {
-                echo 'Checking the running Flask application...'
+                echo 'Running final application tests...'
                 sh '''
                     "$DOCKER" run --rm \
-                        --network host \
-                        -v "$WORKSPACE/$APP_DIR:/app" \
+                        -v "$WORKSPACE:/app" \
                         -w /app \
                         python:3.9-slim \
                         sh -c "pip install -r requirements.txt && python -m unittest discover -s ."
