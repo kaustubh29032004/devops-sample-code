@@ -1,39 +1,22 @@
-
 pipeline {
     agent any
-
-    environment {
-        DOCKER_HOST = 'tcp://jenkins-dind:2375'
-        DOCKER = '/var/jenkins_home/docker'
-    }
 
     stages {
         stage('Build') {
             steps {
-                echo 'Installing Python dependencies...'
+                echo 'Creating virtual environment and installing dependencies...'
                 sh '''
                     set -eu
+                    python3 -m venv venv
+                    . venv/bin/activate
 
-                    APP_PATH="$WORKSPACE/python-flask-app"
-
-                    if [ ! -f "$APP_PATH/app.py" ] ||
-                       [ ! -f "$APP_PATH/requirements.txt" ] ||
-                       [ ! -f "$APP_PATH/test_app.py" ]; then
-                        echo "ERROR: Required Flask files not found in $APP_PATH"
-                        echo "Workspace contents:"
-                        find "$WORKSPACE" -maxdepth 4 -type f \
-                            ! -path '*/.git/*' -print
-                        exit 1
+                    REQ_PATH="$WORKSPACE/requirements.txt"
+                    if [ ! -f "$REQ_PATH" ] && [ -f "$WORKSPACE/python-flask-app/requirements.txt" ]; then
+                        REQ_PATH="$WORKSPACE/python-flask-app/requirements.txt"
                     fi
 
-                    echo "$APP_PATH" > "$WORKSPACE/.flask_app_path"
-                    echo "Application directory: $APP_PATH"
-
-                    "$DOCKER" run --rm \
-                        -v "$APP_PATH:/app" \
-                        -w /app \
-                        python:3.9-slim \
-                        sh -c "pwd && ls -la && python -m pip install -r requirements.txt"
+                    pip install --upgrade pip
+                    pip install -r "$REQ_PATH"
                 '''
             }
         }
@@ -43,13 +26,14 @@ pipeline {
                 echo 'Running unit tests...'
                 sh '''
                     set -eu
-                    APP_PATH="$(cat "$WORKSPACE/.flask_app_path")"
+                    . venv/bin/activate
 
-                    "$DOCKER" run --rm \
-                        -v "$APP_PATH:/app" \
-                        -w /app \
-                        python:3.9-slim \
-                        sh -c "python -m pip install -r requirements.txt && python -m unittest discover -s ."
+                    TEST_PATH="$WORKSPACE"
+                    if [ ! -f "$WORKSPACE/test_app.py" ] && [ -f "$WORKSPACE/python-flask-app/test_app.py" ]; then
+                        TEST_PATH="$WORKSPACE/python-flask-app"
+                    fi
+
+                    python3 -m unittest discover -s "$TEST_PATH"
                 '''
             }
         }
@@ -59,13 +43,18 @@ pipeline {
                 echo 'Deploying application...'
                 sh '''
                     set -eu
-                    APP_PATH="$(cat "$WORKSPACE/.flask_app_path")"
-                    DEPLOY_PATH="$WORKSPACE/python-app-deploy"
+                    APP_SRC="$WORKSPACE"
+                    if [ ! -f "$WORKSPACE/app.py" ] && [ -f "$WORKSPACE/python-flask-app/app.py" ]; then
+                        APP_SRC="$WORKSPACE/python-flask-app"
+                    fi
 
+                    DEPLOY_PATH="$WORKSPACE/python-app-deploy"
                     mkdir -p "$DEPLOY_PATH"
-                    cp "$APP_PATH/app.py" "$DEPLOY_PATH/"
-                    cp "$APP_PATH/requirements.txt" "$DEPLOY_PATH/"
-                    cp "$APP_PATH/test_app.py" "$DEPLOY_PATH/"
+                    cp "$APP_SRC/app.py" "$DEPLOY_PATH/"
+                    cp "$APP_SRC/requirements.txt" "$DEPLOY_PATH/"
+                    if [ -f "$APP_SRC/test_app.py" ]; then
+                        cp "$APP_SRC/test_app.py" "$DEPLOY_PATH/"
+                    fi
 
                     echo "Application copied to $DEPLOY_PATH"
                 '''
@@ -77,45 +66,43 @@ pipeline {
                 echo 'Starting Flask application...'
                 sh '''
                     set -eu
-
-                    "$DOCKER" rm -f python-flask-app || true
-
-                    "$DOCKER" run -d \
-                        --name python-flask-app \
-                        -p 5001:5000 \
-                        -v "$WORKSPACE/python-app-deploy:/app" \
-                        -w /app \
-                        python:3.9-slim \
-                        sh -c "python -m pip install -r requirements.txt && python app.py"
+                    DEPLOY_PATH="$WORKSPACE/python-app-deploy"
+                    pkill -f "python3.*python-app-deploy/app.py" || true
+                    export JENKINS_NODE_COOKIE=dontKillMe
+                    nohup "$WORKSPACE/venv/bin/python3" "$DEPLOY_PATH/app.py" > "$WORKSPACE/app.log" 2>&1 &
+                    sleep 3
                 '''
             }
         }
 
         stage('Test Application') {
             steps {
-                echo 'Testing the deployed application...'
+                echo 'Testing deployed application...'
                 sh '''
                     set -eu
-
-                    "$DOCKER" run --rm \
-                        -v "$WORKSPACE/python-app-deploy:/app" \
-                        -w /app \
-                        python:3.9-slim \
-                        sh -c "python -m pip install -r requirements.txt && python -m unittest discover -s ."
+                    DEPLOY_PATH="$WORKSPACE/python-app-deploy"
+                    if ! curl -sS http://127.0.0.1:5000/ > /dev/null 2>&1; then
+                        export JENKINS_NODE_COOKIE=dontKillMe
+                        nohup "$WORKSPACE/venv/bin/python3" "$DEPLOY_PATH/app.py" > "$WORKSPACE/app.log" 2>&1 &
+                        sleep 3
+                    fi
+                    echo "Response from deployed Flask application:"
+                    curl -sS -i http://127.0.0.1:5000/
                 '''
             }
         }
     }
 
     post {
+        always {
+            sh 'pkill -f "python3.*python-app-deploy/app.py" || true'
+            echo 'Pipeline execution finished.'
+        }
         success {
             echo 'Pipeline completed successfully!'
         }
         failure {
             echo 'Pipeline failed. Check the logs for more details.'
-        }
-        always {
-            echo 'Pipeline execution finished.'
         }
     }
 }
