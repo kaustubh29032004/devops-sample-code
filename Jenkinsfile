@@ -5,15 +5,16 @@ pipeline {
     environment {
         DOCKER_HOST = 'tcp://jenkins-dind:2375'
         DOCKER_CLI = '/var/jenkins_home/docker'
+        APP_DIR = 'python-flask-app'
     }
 
     stages {
         stage('Build') {
             steps {
-                echo 'Creating Python environment and installing dependencies...'
+                echo 'Installing Python dependencies...'
                 sh '''
                     $DOCKER_CLI run --rm \
-                        -v "$WORKSPACE:/app" \
+                        -v "$WORKSPACE/$APP_DIR:/app" \
                         -w /app \
                         python:3.9-slim \
                         pip install -r requirements.txt
@@ -26,7 +27,7 @@ pipeline {
                 echo 'Running unit tests...'
                 sh '''
                     $DOCKER_CLI run --rm \
-                        -v "$WORKSPACE:/app" \
+                        -v "$WORKSPACE/$APP_DIR:/app" \
                         -w /app \
                         python:3.9-slim \
                         sh -c "pip install -r requirements.txt && python -m unittest discover -s ."
@@ -39,14 +40,15 @@ pipeline {
                 echo 'Deploying application...'
                 sh '''
                     mkdir -p "$WORKSPACE/python-app-deploy"
-                    cp "$WORKSPACE/app.py" "$WORKSPACE/python-app-deploy/"
+                    cp "$WORKSPACE/$APP_DIR/app.py" \
+                       "$WORKSPACE/python-app-deploy/"
                 '''
             }
         }
 
         stage('Run Application') {
             steps {
-                echo 'Starting application in Docker...'
+                echo 'Starting Flask application...'
                 sh '''
                     $DOCKER_CLI run -d --rm \
                         --name python-flask-app \
@@ -61,11 +63,11 @@ pipeline {
 
         stage('Test Application') {
             steps {
-                echo 'Testing application...'
+                echo 'Testing Flask application...'
                 sh '''
                     $DOCKER_CLI run --rm \
                         --network host \
-                        -v "$WORKSPACE:/app" \
+                        -v "$WORKSPACE/$APP_DIR:/app" \
                         -w /app \
                         python:3.9-slim \
                         sh -c "pip install -r requirements.txt && python test_app.py"
